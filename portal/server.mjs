@@ -29,7 +29,7 @@ if(!db.prepare("SELECT id FROM users LIMIT 1").get())db.prepare("INSERT INTO use
 
 const mime={".html":"text/html; charset=utf-8",".js":"text/javascript; charset=utf-8",".css":"text/css; charset=utf-8",".json":"application/json; charset=utf-8"};
 
-http.createServer(async(q,r)=>{
+http.createServer((q,r)=>{(async()=>{
   r._cors=corsFor(q);
   if(q.headers.origin&&!allowedOrigins.has(q.headers.origin)&&q.method==="OPTIONS")return send(r,403,{error:"origin_not_allowed"});
   if(q.method==="OPTIONS")return send(r,204,"","text/plain");
@@ -77,4 +77,4 @@ http.createServer(async(q,r)=>{
   if(file!==publicDir&&!file.startsWith(publicDir+path.sep))return send(r,403,{error:"forbidden"});
   if(!fs.existsSync(file)||fs.statSync(file).isDirectory())return send(r,404,{error:"not_found"});
   r.writeHead(200,{...responseCors,"X-Content-Type-Options":"nosniff","Referrer-Policy":"no-referrer","Content-Type":mime[path.extname(file).toLowerCase()]||"application/octet-stream"});fs.createReadStream(file).pipe(r)
-}).listen(port,bind,()=>console.log(`MetaTruth v0.10.0-alpha http://${bind}:${port}`));
+})().catch(err=>{console.error("Request error:",err.message);if(!r.headersSent)send(r,err.message==="request_body_too_large"?413:400,{error:err.message==="request_body_too_large"?"request_body_too_large":"invalid_request"})});}).listen(port,bind,()=>console.log(`MetaTruth v0.10.0-alpha http://${bind}:${port}`));
