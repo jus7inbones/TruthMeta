@@ -18,7 +18,7 @@ const corsFor=q=>{const origin=q.headers.origin;return origin&&allowedOrigins.ha
 
 
 function send(r,s,b,t="application/json; charset=utf-8"){r.writeHead(s,{...(r._cors||{}),"X-Content-Type-Options":"nosniff","Referrer-Policy":"no-referrer","Content-Type":t});r.end(typeof b==="string"?b:JSON.stringify(b))}
-function body(q){return new Promise((resolve,reject)=>{let d="",done=false;const fail=e=>{if(!done){done=true;reject(e)}};q.on("data",chunk=>{d+=chunk;if(d.length>65536)fail(new Error("request_body_too_large"))});q.on("end",()=>{if(done)return;try{done=true;resolve(d?JSON.parse(d):{})}catch(e){fail(e)}});q.on("error",fail)})}
+function body(q){return new Promise((resolve,reject)=>{let d="",bytes=0,done=false;const fail=e=>{if(!done){done=true;reject(e)}};q.on("data",chunk=>{if(done)return;bytes+=chunk.length;if(bytes>65536)return fail(new Error("request_body_too_large"));d+=chunk});q.on("end",()=>{if(done)return;try{const parsed=d?JSON.parse(d):{};done=true;resolve(parsed)}catch(e){fail(e)}});q.on("error",fail)})}
 function can(u,r){return u&&roles[u.role]>=roles[r]}
 function audit(action,u,payload={}){const p=db.prepare("SELECT hash FROM audit ORDER BY rowid DESC LIMIT 1").get(),ts=now(),h=sha(JSON.stringify({action,userId:u?.id||null,payload,ts,previousHash:p?.hash||null}));db.prepare("INSERT INTO audit VALUES(?,?,?,?,?,?,?)").run(id("aud"),ts,action,u?.id||null,JSON.stringify(payload),p?.hash||null,h)}
 function pub(u){return u&&{id:u.id,email:u.email,role:u.role,name:u.name,active:!!u.active,createdAt:u.created_at}}
