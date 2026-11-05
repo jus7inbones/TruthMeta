@@ -1,0 +1,10 @@
+node_modules/
+.env
+.env.*
+!.env.example
+portal/data/*.db
+portal/data/*.db-shm
+portal/data/*.db-wal
+portal/data/*.sqlite*
+coverage/
+.DS_Store
