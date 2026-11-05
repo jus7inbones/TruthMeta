@@ -15,9 +15,9 @@ const sha=s=>crypto.createHash("sha256").update(String(s)).digest("hex");
 const now=()=>new Date().toISOString();
 const allowedOrigins=new Set((process.env.METATRUTH_ALLOWED_ORIGINS||"").split(",").map(s=>s.trim()).filter(Boolean));
 const corsFor=q=>{const origin=q.headers.origin;return origin&&allowedOrigins.has(origin)?{"Access-Control-Allow-Origin":origin,"Vary":"Origin","Access-Control-Allow-Headers":"Content-Type, Authorization","Access-Control-Allow-Methods":"GET,POST,PATCH,DELETE,OPTIONS"}:{}};
-let responseCors={};
 
-function send(r,s,b,t="application/json; charset=utf-8"){r.writeHead(s,{...responseCors,"X-Content-Type-Options":"nosniff","Referrer-Policy":"no-referrer","Content-Type":t});r.end(typeof b==="string"?b:JSON.stringify(b))}
+
+function send(r,s,b,t="application/json; charset=utf-8"){r.writeHead(s,{...(r._cors||{}),"X-Content-Type-Options":"nosniff","Referrer-Policy":"no-referrer","Content-Type":t});r.end(typeof b==="string"?b:JSON.stringify(b))}
 function body(q){return new Promise((resolve,reject)=>{let d="",done=false;const fail=e=>{if(!done){done=true;reject(e)}};q.on("data",chunk=>{d+=chunk;if(d.length>65536)fail(new Error("request_body_too_large"))});q.on("end",()=>{if(done)return;try{done=true;resolve(d?JSON.parse(d):{})}catch(e){fail(e)}});q.on("error",fail)})}
 function can(u,r){return u&&roles[u.role]>=roles[r]}
 function audit(action,u,payload={}){const p=db.prepare("SELECT hash FROM audit ORDER BY rowid DESC LIMIT 1").get(),ts=now(),h=sha(JSON.stringify({action,userId:u?.id||null,payload,ts,previousHash:p?.hash||null}));db.prepare("INSERT INTO audit VALUES(?,?,?,?,?,?,?)").run(id("aud"),ts,action,u?.id||null,JSON.stringify(payload),p?.hash||null,h)}
@@ -30,7 +30,7 @@ if(!db.prepare("SELECT id FROM users LIMIT 1").get())db.prepare("INSERT INTO use
 const mime={".html":"text/html; charset=utf-8",".js":"text/javascript; charset=utf-8",".css":"text/css; charset=utf-8",".json":"application/json; charset=utf-8"};
 
 http.createServer(async(q,r)=>{
-  responseCors=corsFor(q);
+  r._cors=corsFor(q);
   if(q.headers.origin&&!allowedOrigins.has(q.headers.origin)&&q.method==="OPTIONS")return send(r,403,{error:"origin_not_allowed"});
   if(q.method==="OPTIONS")return send(r,204,"","text/plain");
   const u=new URL(q.url,`http://${q.headers.host||"localhost"}`);
