@@ -6,16 +6,19 @@ import {fileURLToPath} from "node:url";
 import {db} from "./db.mjs";
 
 const __dirname=path.dirname(fileURLToPath(import.meta.url)),publicDir=__dirname,port=Number(process.env.PORT||8787),bind=process.env.BIND||"127.0.0.1";
-const email=process.env.METATRUTH_ADMIN_EMAIL||"admin@metatruth.local",pass=process.env.METATRUTH_ADMIN_PASSWORD||"ChangeMe!123";
+const email=process.env.METATRUTH_ADMIN_EMAIL,pass=process.env.METATRUTH_ADMIN_PASSWORD;
+if(!email||!pass||pass.length<16){console.error("Set METATRUTH_ADMIN_EMAIL and METATRUTH_ADMIN_PASSWORD (minimum 16 characters) before starting the portal.");process.exit(1)}
 const roles={viewer:1,reporter:2,auditor:2,investigator:3,judge:4,admin:5,owner:6};
 const id=p=>`${p}_${Date.now().toString(36)}_${crypto.randomBytes(4).toString("hex")}`;
 const pw=p=>crypto.scryptSync(String(p),"metatruth-v010",64).toString("hex");
 const sha=s=>crypto.createHash("sha256").update(String(s)).digest("hex");
 const now=()=>new Date().toISOString();
-const cors={"Access-Control-Allow-Origin":"*","Access-Control-Allow-Headers":"Content-Type, Authorization","Access-Control-Allow-Methods":"GET,POST,PATCH,DELETE,OPTIONS"};
+const allowedOrigins=new Set((process.env.METATRUTH_ALLOWED_ORIGINS||"").split(",").map(s=>s.trim()).filter(Boolean));
+const corsFor=q=>{const origin=q.headers.origin;return origin&&allowedOrigins.has(origin)?{"Access-Control-Allow-Origin":origin,"Vary":"Origin","Access-Control-Allow-Headers":"Content-Type, Authorization","Access-Control-Allow-Methods":"GET,POST,PATCH,DELETE,OPTIONS"}:{}};
 
-function send(r,s,b,t="application/json; charset=utf-8"){r.writeHead(s,{...cors,"Content-Type":t});r.end(typeof b==="string"?b:JSON.stringify(b))}
-function body(q){return new Promise((a,b)=>{let d="";q.on("data",c=>d+=c);q.on("end",()=>{try{a(d?JSON.parse(d):{})}catch(e){b(e)}});q.on("error",b)})}
+
+function send(r,s,b,t="application/json; charset=utf-8"){r.writeHead(s,{...(r._cors||{}),"X-Content-Type-Options":"nosniff","Referrer-Policy":"no-referrer","Content-Type":t});r.end(typeof b==="string"?b:JSON.stringify(b))}
+function body(q){return new Promise((resolve,reject)=>{let d="",bytes=0,done=false;const fail=e=>{if(!done){done=true;reject(e)}};q.on("data",chunk=>{if(done)return;bytes+=chunk.length;if(bytes>65536)return fail(new Error("request_body_too_large"));d+=chunk});q.on("end",()=>{if(done)return;try{const parsed=d?JSON.parse(d):{};done=true;resolve(parsed)}catch(e){fail(e)}});q.on("error",fail)})}
 function can(u,r){return u&&roles[u.role]>=roles[r]}
 function audit(action,u,payload={}){const p=db.prepare("SELECT hash FROM audit ORDER BY rowid DESC LIMIT 1").get(),ts=now(),h=sha(JSON.stringify({action,userId:u?.id||null,payload,ts,previousHash:p?.hash||null}));db.prepare("INSERT INTO audit VALUES(?,?,?,?,?,?,?)").run(id("aud"),ts,action,u?.id||null,JSON.stringify(payload),p?.hash||null,h)}
 function pub(u){return u&&{id:u.id,email:u.email,role:u.role,name:u.name,active:!!u.active,createdAt:u.created_at}}
@@ -26,7 +29,9 @@ if(!db.prepare("SELECT id FROM users LIMIT 1").get())db.prepare("INSERT INTO use
 
 const mime={".html":"text/html; charset=utf-8",".js":"text/javascript; charset=utf-8",".css":"text/css; charset=utf-8",".json":"application/json; charset=utf-8"};
 
-http.createServer(async(q,r)=>{
+http.createServer((q,r)=>{(async()=>{
+  r._cors=corsFor(q);
+  if(q.headers.origin&&!allowedOrigins.has(q.headers.origin)&&q.method==="OPTIONS")return send(r,403,{error:"origin_not_allowed"});
   if(q.method==="OPTIONS")return send(r,204,"","text/plain");
   const u=new URL(q.url,`http://${q.headers.host||"localhost"}`);
   if(u.pathname==="/api/health")return send(r,200,{ok:true,version:"0.10.0-alpha",database:"sqlite"});
@@ -69,7 +74,7 @@ http.createServer(async(q,r)=>{
   }
 
   let rel=u.pathname==="/"?"index.html":u.pathname.replace(/^\/+/,""),file=path.normalize(path.join(publicDir,rel));
-  if(!file.startsWith(publicDir))return send(r,403,{error:"forbidden"});
+  if(file!==publicDir&&!file.startsWith(publicDir+path.sep))return send(r,403,{error:"forbidden"});
   if(!fs.existsSync(file)||fs.statSync(file).isDirectory())return send(r,404,{error:"not_found"});
-  r.writeHead(200,{...cors,"Content-Type":mime[path.extname(file).toLowerCase()]||"application/octet-stream"});fs.createReadStream(file).pipe(r)
-}).listen(port,bind,()=>console.log(`MetaTruth v0.10.0-alpha http://${bind}:${port}`));
+  r.writeHead(200,{...responseCors,"X-Content-Type-Options":"nosniff","Referrer-Policy":"no-referrer","Content-Type":mime[path.extname(file).toLowerCase()]||"application/octet-stream"});fs.createReadStream(file).pipe(r)
+})().catch(err=>{console.error("Request error:",err.message);if(!r.headersSent)send(r,err.message==="request_body_too_large"?413:400,{error:err.message==="request_body_too_large"?"request_body_too_large":"invalid_request"})});}).listen(port,bind,()=>console.log(`MetaTruth v0.10.0-alpha http://${bind}:${port}`));
